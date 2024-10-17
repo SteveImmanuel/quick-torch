@@ -39,6 +39,9 @@ class ExampleTrainer(BaseTrainer):
         batch_data = [x.to(self.gpu_id) for x in batch_data if type(x) == T.Tensor]
 
         x, y = batch_data
-        y_pred = self.model(x)
+
+        with T.cuda.amp.autocast():
+            y_pred = self.model(x)
+
         loss = self.loss_fn(y_pred, y)
         return loss

@@ -67,10 +67,10 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
 def get_args_parser():
     parser = argparse.ArgumentParser('Stable Diffusion for Cross-Domain Translation', add_help=False)
     parser.add_argument('--uid', type=str, help='unique id for the run', default=None)
-    parser.add_argument('--port', type=int, help='DDP port', default=None)
     parser.add_argument('--config', type=str, help='path to json config', default='config/example_config.yaml')
     parser.add_argument('--model-path', type=str, help='ckpt path to continue', default=None)
     parser.add_argument('--patience', type=int, help='patience for early stopping', default=-1)
+    parser.add_argument('--port', type=int, help='DDP port', default=None)
     parser.add_argument('--no-ddp', action='store_true', help='disable DDP')
     parser.add_argument('--no-save', action='store_true', help='disable logging and checkpoint saving (for debugging)')
     return parser.parse_args()
