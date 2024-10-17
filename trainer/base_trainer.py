@@ -1,87 +1,72 @@
 import time
 import os
 import torch as T
-import json
+import yaml
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from torch.utils.tensorboard import SummaryWriter
-from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import Dict
 from tqdm import tqdm
 from collections import deque
+from torch.utils.tensorboard import SummaryWriter
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader
 from constants import *
 from utils.logger import get_logger
 
 @dataclass
 class Tracker:
-    last_loss: float
-    last_metric_val: float
-    epoch: int
-    step_counter: int
-    best_epoch: int
-    best_metric_val: float
+    last_loss: float = None
+    last_metric: float  = None
+    epoch: int = 0
+    step_counter: int = 0
+    val_step_counter: int = 0
+    best_epoch: int = None
+    best_metric: float = None
+    direction: str = 'max'
 
     def inc_step_counter(self):
         self.step_counter += 1
+    
+    def inc_val_step_counter(self):
+        self.val_step_counter += 1
+    
+    def is_metric_better(self, epoch: int) -> bool:
+        def _compare(a, b):
+            return a > b if self.direction == 'max' else a < b
 
-    def update_metric_val(self, metric_val: float, epoch: int):
-        pass
+        if self.best_metric is None or _compare(self.last_metric, self.best_metric):
+            self.best_metric = self.last_metric
+            self.best_epoch = epoch
+            return True
+        return False
 
 class BaseTrainer(ABC):
     def __init__(self, model: T.nn.Module, gpu_id: int, args: Dict, log_enabled: bool = True, is_eval: bool = False):
-        self.logger = get_logger(__class__.__name__, gpu_id)
+        self.logger = get_logger(__class__.__name__) if self.logger is None else self.logger
         self.model = model
         self.args = args
         self.gpu_id = gpu_id
         self.log_enabled = log_enabled
         self.is_eval = is_eval
 
-        if args.get('uid') is not None:
-            self.uid = args['uid']
-        else:
-            self.uid = int(time.time())
-
+        self.uid = args['train'].get('uid', int(time.time()))
         self.loss_fn = self._get_loss_fn()
+
         if not is_eval:
             self.optim = self._get_optimizer()
             self.scaler = T.cuda.amp.GradScaler()
             self.scheduler = self._get_scheduler()
 
-        if log_enabled and self.gpu_id == 0:
-            self.args['log_dir'] = os.path.join(args['log_dir'], f'{self.uid}')
-            self.summary_writer = SummaryWriter(log_dir=self.args['log_dir'])
-            self.args['ckpt_dir'] = os.path.join(self.args['log_dir'], 'weights')
-            os.makedirs(self.args['ckpt_dir'], exist_ok=True)
+        if self.can_log:
+            self.log_dir = os.path.join(args['train']['log_dir'], f'{self.uid}')
+            self.summary_writer = SummaryWriter(log_dir=self.log_dir)
+            self.ckpt_dir = os.path.join(self.log_dir, 'weights')
+            
+            os.makedirs(self.ckpt_dir, exist_ok=True)
             self.save_config()
 
         self.tracker = Tracker()
-        # self.last_loss = None
-        # self.last_metric_val = None
-        # self.counter = 0
-        # self.best_epoch = None
-        # self.best_metric_val = None
-        # self.history = {}
         self._ddp_model()        
-    
-    @abstractmethod
-    def _get_loss_fn(self) -> T.nn.Module:
-        raise NotImplementedError()
-    
-    @abstractmethod
-    def _get_optimizer(self) -> T.optim.Optimizer:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def _get_scheduler(self) -> T.optim.lr_scheduler.LRScheduler:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def step(self, *batch_data, is_train: bool):
-        raise NotImplementedError()
-
-    def _ddp_model(self):
-        self.model = self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[self.gpu_id])
     
     @property
     def is_main_process(self):
@@ -91,12 +76,24 @@ class BaseTrainer(ABC):
     def can_log(self):
         return self.log_enabled and self.is_main_process
 
-    def is_metric_val_better(self, epoch=None):
-        if self.best_metric_val is None or self.last_metric_val > self.best_metric_val:
-            self.best_metric_val = self.last_metric_val
-            self.best_epoch = epoch
-            return True
-        return False
+    def _get_optimizer(self) -> T.optim.Optimizer:
+        return T.optim.AdamW(lr=self.args['train']['lr'], params=self.model.parameters(), betas=(0.9, 0.999), eps=1e-15)
+
+    @abstractmethod
+    def _get_scheduler(self) -> T.optim.lr_scheduler.LRScheduler:
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def _get_loss_fn(self) -> T.nn.Module:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def step(self, *batch_data) -> T.Tensor:
+        raise NotImplementedError()
+
+    def _ddp_model(self):
+        self.model = self.model.to(self.gpu_id)
+        self.model = DDP(self.model, device_ids=[self.gpu_id])
 
     def write_summary(self, title: str, value: float, step: int):
         if self.can_log:
@@ -107,70 +104,75 @@ class BaseTrainer(ABC):
             self.summary_writer.add_image(title, image, step)
 
     def save_config(self):
-        if self.is_main_process:
-            config = self.args
+        if not self.is_main_process:
+            return
+        
+        config = self.args
 
-            self.logger.info('======CONFIGURATIONS======')
-            for k, v in config.items():
-                self.logger.info(f'{k.upper()}: {v}')
-            
-            config_path = os.path.join(self.args['log_dir'], 'config.json')
-            with open(config_path, 'w') as f:
-                json.dump(config, f)
-            self.logger.info(f'Training config saved to {config_path}')
+        self.logger.info('======CONFIGURATIONS======')
+        for k in config:
+            self.logger.info(f'{k.upper()}')
+            v: Dict = config[k]
+            for ik, iv in v.items():
+                self.logger.info(f'\t{ik.upper()}: {iv}')
+        
+        config_path = os.path.join(self.log_dir, 'config.yaml')
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f)
+        self.logger.info(f'Training config saved to {config_path}')
 
     def save_checkpoint(self, epoch: int, name: str = '', only_model: bool = True):
-        if self.is_main_process:
-            save_checkpoint = {'model': self.model.module.state_dict()}
-            if not only_model:
-                save_checkpoint['optimizer'] = self.optim.state_dict()
-                save_checkpoint['scheduler'] = self.scheduler.state_dict()
-            if name != '':
-                ckpt_path = os.path.join(self.args['ckpt_dir'], f'{name}.pt')
-            else:
-                ckpt_path = os.path.join(
-                    self.args['ckpt_dir'],
-                    f'epoch{epoch:02}_loss{self.last_loss:.4f}_metric{self.last_metric_val:.4f}.pt',
-                )
-            T.save(save_checkpoint, ckpt_path)
-            self.logger.info(f'Checkpoint saved to {ckpt_path}')
+        if not self.is_main_process:
+            return
+        
+        save_checkpoint = {'model': self.model.module.state_dict()}
+        if not only_model:
+            save_checkpoint['optimizer'] = self.optim.state_dict()
+            save_checkpoint['scheduler'] = self.scheduler.state_dict()
+        if name != '':
+            ckpt_path = os.path.join(self.ckpt_dir, f'{name}.pt')
+        else:
+            ckpt_path = os.path.join(self.ckpt_dir, f'epoch{epoch:02}_metric{self.tracker.last_metric:.4f}.pt')
+
+        T.save(save_checkpoint, ckpt_path)
+        self.logger.info(f'Checkpoint saved to {ckpt_path}')
     
-    def load_checkpoint(self, ckpt_path: str, only_model: bool = True):
+    def load_checkpoint(self, ckpt_path: str):
         assert os.path.exists(ckpt_path)
         checkpoint = T.load(ckpt_path, map_location='cpu')
         self.model.module.load_state_dict(checkpoint['model'])
-        if not only_model:
+        if 'optimizer' in checkpoint:
             self.optim.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
             self.scheduler.load_state_dict(checkpoint['scheduler'])
         self.logger.info(f'Succesfully loaded model in {ckpt_path}')
 
-    def process_data(self, dl: T.utils.data.DataLoader, is_train: bool, epoch: int):
-        if is_train:
-            self.logger.info('Training Phase')
-        elif not self.is_eval:
-            self.logger.info('Validation Phase')
+    def train(self, dl: DataLoader, epoch: int):
+        """
+        Handles the training loop for a single epoch. 
+        In this method, `yield` is to handle multiple validation phases within a single epoch.
+        """
+        self.logger.info('Training Phase')
+        self.model.train()
 
         batch_losses = T.zeros(2, device=self.gpu_id)
-
         pbar = tqdm(dl, disable=not self.is_main_process)
 
         for i, batch_data in enumerate(pbar):
-            if not is_train:
-                self.model.eval()
-                with T.no_grad():
-                    b_loss = self.step(batch_data, is_train)
-            else:
-                self.model.train()
-                b_loss = self.step(batch_data, is_train)
-                self.scheduler.step()
+            b_loss = self.step(*batch_data)
+            self.optim.zero_grad()
+            self.scaler.scale(b_loss).backward()
+            self.scaler.step(self.optim)
+            self.scaler.update()
+            self.scheduler.step()
 
-                for i in range(len(self.optim.param_groups)):
-                    self.write_summary(f'LR Scheduler/{i}', self.optim.param_groups[i]['lr'], self.counter)
-                self.write_summary('Training/Batch Loss', b_loss, self.counter)
+            for k in range(len(self.optim.param_groups)):
+                self.write_summary(f'LR Scheduler/{k}', self.optim.param_groups[k]['lr'], self.tracker.step_counter)
+            self.write_summary('Training/Batch Loss', b_loss, self.tracker.step_counter)
 
-                self.counter += 1
-                yield i
-
+            self.tracker.inc_step_counter()
+            yield i
+            
             if not self.is_main_process:  # reset for gpu rank > 0
                 batch_losses = T.zeros(2, device=self.gpu_id)
 
@@ -180,58 +182,68 @@ class BaseTrainer(ABC):
             T.distributed.reduce(batch_losses, dst=0)
             avg_losses = batch_losses[0] / batch_losses[1]
             
-            pbar.set_postfix({'Loss': f'{avg_losses:.5f}'})
+            pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
 
-        if not is_train:
-            self.last_loss = avg_losses
-            tag = 'Validation'
-        else:
-            tag = 'Training'
-
-        self.write_summary(f'{tag}/Loss', avg_losses, epoch)
+        self.write_summary(f'Train/Loss', avg_losses, epoch)
         yield -1
 
-    
-    def do_training(self, train_dataloader: T.utils.data.DataLoader, val_dataloader: T.utils.data.DataLoader):
-        eval_per_epoch = self.args['eval_per_epoch']
-        epoch = self.args['epoch']
-        
+    def validate(self, dl: DataLoader, epoch: int):
+        """Handles the validation loop for a single epoch."""
+        self.logger.info('Validation Phase')
+        self.model.eval()
+
+        batch_losses = T.zeros(2, device=self.gpu_id)
+        pbar = tqdm(dl, disable=not self.is_main_process)
+
+        with T.no_grad():
+            for i, batch_data in enumerate(pbar):
+                b_loss = self.step(*batch_data)
+                self.tracker.inc_val_step_counter()
+                
+                if not self.is_main_process:  # reset for gpu rank > 0
+                    batch_losses = T.zeros(2, device=self.gpu_id)
+
+                batch_losses[0] += b_loss
+                batch_losses[1] += 1
+
+                T.distributed.reduce(batch_losses, dst=0)
+                avg_losses = batch_losses[0] / batch_losses[1]
+                
+                pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
+
+            self.tracker.last_loss = avg_losses
+            self.tracker.last_metric = avg_losses
+            self.write_summary(f'Validation/Loss', avg_losses, epoch)
+   
+    def do_training(self, train_dataloader: DataLoader, val_dataloader: DataLoader):
+        """Handles full training process for all epochs. Each epoch consists of training and validation phase."""
+        self.logger.info('Begin Training')
+        eval_per_epoch = self.args['train'].get('eval_per_epoch', 1)
+        epoch = self.args['train'].get('epoch')
         eval_idx = [len(train_dataloader) // eval_per_epoch * i for i in range(1, eval_per_epoch)]
+        patience = self.args.get('patience', -1)
+        
         early_stop = False
         for i in range(epoch):
             self.logger.info(f'Epoch {i+1}/{epoch}')
-            k = 0
-            for step in self.process_data(train_dataloader, True, i):
+            for step in self.train(train_dataloader, i):
                 if step in eval_idx or step == -1:
-                    deque(self.process_data(val_dataloader, False, eval_per_epoch * i + k), maxlen=0)
+                    self.validate(val_dataloader, i)
 
-                    if self.is_metric_val_better(i + 1):
+                    if self.tracker.is_metric_better(i + 1):
                         self.save_checkpoint(i + 1, 'best')
                     else:
-                        if self.args['patience'] > 0 and i + 1 - self.best_epoch > self.args['patience']:
+                        if self.args['train']['patience'] > 0 and i + 1 - self.tracker.best_epoch > self.args['train']['patience']:
                             early_stop = True
                             break
-                    k += 1
 
-            if (i + 1) % self.args['ckpt_interval'] == 0 or i == self.args['epoch'] - 1:
+            if (i + 1) % self.args['train']['ckpt_interval'] == 0 or i == self.args['train']['epoch'] - 1:
                 self.save_checkpoint(i + 1)
 
             self.logger.info(f'Epoch complete\n')
 
             if early_stop:
-                self.logger.info(f'Early stopping. No improvement in validation metric for the last {self.args["patience"]} epochs.')
+                self.logger.info(f'Early stopping. No improvement in validation metric for the last {self.args["train"]["patience"]} epochs.')
                 break
-        self.logger.info(f'Best result was seen in epoch {self.best_epoch}')
-        
-        final_result = {
-            'best_epoch': self.best_epoch,
-            'best_metric_val': self.best_metric_val,
-        }
-        final_result_path = os.path.join(self.args['log_dir'], 'final_result.json')
-        with open(final_result_path, 'w') as f:
-            json.dump(final_result, f)
-        self.logger.info(f'Final result saved to {final_result_path}')
 
-    def do_evaluation(self, test_dataloader: T.utils.data.DataLoader):
-        deque(self.process_data(test_dataloader, False, 0), maxlen=0)
-        self.logger.info(f'Loss: {self.last_loss:.5f}')
+        self.logger.info(f'Best result was seen in epoch {self.tracker.best_epoch} with metric value {self.tracker.best_metric:.4f}')
