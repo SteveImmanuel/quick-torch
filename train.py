@@ -36,7 +36,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     logger.info(f'Train dataset size: {len(train_dataset)}')
     logger.info(f'Val dataset size: {len(val_dataset)}')
 
-    logger.info(f'Using {T.cuda.device_count()} GPU(s)')
+    logger.info(f'Using {T.cuda.device_count()} GPU(s), actual batch size: {train_args["train"]["batch_size"] * T.cuda.device_count()}')
     if train_args.get('model_path') is not None:
         trainer.load_checkpoint(train_args['model_path'])
 

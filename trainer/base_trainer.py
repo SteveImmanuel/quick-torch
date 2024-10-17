@@ -49,7 +49,7 @@ class BaseTrainer(ABC):
         self.log_enabled = log_enabled
         self.is_eval = is_eval
 
-        self.uid = args['train'].get('uid', int(time.time()))
+        self.uid = args['train']['uid'] if args['train']['uid'] is not None else int(time.time())
         self.loss_fn = self._get_loss_fn()
 
         if not is_eval:

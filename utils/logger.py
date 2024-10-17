@@ -1,7 +1,11 @@
 import logging
 
 def setup_logging():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO, 
+        format='%(asctime)s::%(levelname)s::%(name)s:%(message)s',
+        datefmt='%H:%M:%S'  # Format for time as HH:MM:SS
+    )
 
 def get_logger(name: str, is_disabled: bool = False):
     # adapted from https://discuss.pytorch.org/t/ddp-training-log-issue/125808
