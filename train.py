@@ -21,9 +21,10 @@ def ddp_setup(rank: int, world_size: int, port):
     init_process_group('nccl', rank=rank, world_size=world_size)
 
 def main(rank: int, world_size: int, train_args: Dict, port: int):
-    ddp_setup(rank, world_size, port)
-
     setup_logging()
+    if not train_args['train']['no_ddp']:
+        ddp_setup(rank, world_size, port)
+    
     logger = get_logger(__name__, rank)
 
     logger.info('Instantiating model and trainer agent')
@@ -36,7 +37,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     logger.info(f'Train dataset size: {len(train_dataset)}')
     logger.info(f'Val dataset size: {len(val_dataset)}')
 
-    logger.info(f'Using {T.cuda.device_count()} GPU(s), actual batch size: {train_args["train"]["batch_size"] * T.cuda.device_count()}')
+    logger.info(f'Using {world_size} GPU(s), actual batch size: {train_args["train"]["batch_size"] * world_size}')
     if train_args.get('model_path') is not None:
         trainer.load_checkpoint(train_args['model_path'])
 
@@ -44,10 +45,10 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=train_args['train']['batch_size'],
-        shuffle=False,
+        shuffle=True if train_args['train']['no_ddp'] else False,
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
-        sampler=DistributedSampler(train_dataset),
+        sampler=None if train_args['train']['no_ddp'] else DistributedSampler(train_dataset),
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -55,7 +56,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
         shuffle=False,
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
-        sampler=DistributedSampler(val_dataset),
+        sampler=None if train_args['train']['no_ddp'] else DistributedSampler(val_dataset),
     )
 
     trainer.do_training(train_dataloader, val_dataloader)
@@ -68,6 +69,7 @@ def get_args_parser():
     parser.add_argument('--config', type=str, help='path to json config', default='config/example_config.yaml')
     parser.add_argument('--model-path', type=str, help='ckpt path to continue', default=None)
     parser.add_argument('--patience', type=int, help='patience for early stopping', default=-1)
+    parser.add_argument('--no-ddp', action='store_true', help='disable DDP')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -80,7 +82,11 @@ if __name__ == '__main__':
         train_args['train']['model_path'] = args.model_path
     if args.patience != -1:
         train_args['train']['patience'] = args.patience 
+    train_args['train']['no_ddp'] = args.no_ddp
 
-    world_size = T.cuda.device_count()
-    port = str(random.randint(10000, 60000)) if args.port is None else str(args.port)
-    mp.spawn(main, nprocs=world_size, args=(world_size, train_args, port))
+    if not train_args['train']['no_ddp']:
+        world_size = T.cuda.device_count()
+        port = str(random.randint(10000, 60000)) if args.port is None else str(args.port)
+        mp.spawn(main, nprocs=world_size, args=(world_size, train_args, port))
+    else:
+        main(0, 1, train_args, 0)

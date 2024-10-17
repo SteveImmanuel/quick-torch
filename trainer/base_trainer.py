@@ -66,7 +66,9 @@ class BaseTrainer(ABC):
             self.save_config()
 
         self.tracker = Tracker()
-        self._ddp_model()        
+        self.model = self.model.to(self.gpu_id)
+        if not args['train']['no_ddp']:
+            self.model = DDP(self.model, device_ids=[self.gpu_id])
     
     @property
     def is_main_process(self):
@@ -90,10 +92,6 @@ class BaseTrainer(ABC):
     @abstractmethod
     def step(self, *batch_data) -> T.Tensor:
         raise NotImplementedError()
-
-    def _ddp_model(self):
-        self.model = self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[self.gpu_id])
 
     def write_summary(self, title: str, value: float, step: int):
         if self.can_log:
@@ -125,7 +123,11 @@ class BaseTrainer(ABC):
         if not self.is_main_process:
             return
         
-        save_checkpoint = {'model': self.model.module.state_dict()}
+        if self.args['train']['no_ddp']:
+            save_checkpoint = {'model': self.model.state_dict()}
+        else:
+            save_checkpoint = {'model': self.model.module.state_dict()}
+            
         if not only_model:
             save_checkpoint['optimizer'] = self.optim.state_dict()
             save_checkpoint['scheduler'] = self.scheduler.state_dict()
@@ -140,7 +142,12 @@ class BaseTrainer(ABC):
     def load_checkpoint(self, ckpt_path: str):
         assert os.path.exists(ckpt_path)
         checkpoint = T.load(ckpt_path, map_location='cpu')
-        self.model.module.load_state_dict(checkpoint['model'])
+
+        if self.args['train']['no_ddp']:
+            self.model.load_state_dict(checkpoint['model'])
+        else:
+            self.model.module.load_state_dict(checkpoint['model'])
+            
         if 'optimizer' in checkpoint:
             self.optim.load_state_dict(checkpoint['optimizer'])
         if 'scheduler' in checkpoint:
@@ -179,7 +186,8 @@ class BaseTrainer(ABC):
             batch_losses[0] += b_loss
             batch_losses[1] += 1
 
-            T.distributed.reduce(batch_losses, dst=0)
+            if not self.args['train']['no_ddp']:
+                T.distributed.reduce(batch_losses, dst=0)
             avg_losses = batch_losses[0] / batch_losses[1]
             
             pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
@@ -196,7 +204,7 @@ class BaseTrainer(ABC):
         pbar = tqdm(dl, disable=not self.is_main_process)
 
         with T.no_grad():
-            for i, batch_data in enumerate(pbar):
+            for batch_data in pbar:
                 b_loss = self.step(*batch_data)
                 self.tracker.inc_val_step_counter()
                 
@@ -206,7 +214,8 @@ class BaseTrainer(ABC):
                 batch_losses[0] += b_loss
                 batch_losses[1] += 1
 
-                T.distributed.reduce(batch_losses, dst=0)
+                if not self.args['train']['no_ddp']:
+                    T.distributed.reduce(batch_losses, dst=0)
                 avg_losses = batch_losses[0] / batch_losses[1]
                 
                 pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
