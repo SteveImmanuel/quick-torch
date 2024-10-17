@@ -168,7 +168,7 @@ class BaseTrainer(ABC):
 
             for k in range(len(self.optim.param_groups)):
                 self.write_summary(f'LR Scheduler/{k}', self.optim.param_groups[k]['lr'], self.tracker.step_counter)
-            self.write_summary('Training/Batch Loss', b_loss, self.tracker.step_counter)
+            self.write_summary('Train/Batch Loss', b_loss, self.tracker.step_counter)
 
             self.tracker.inc_step_counter()
             yield i
@@ -220,30 +220,31 @@ class BaseTrainer(ABC):
         self.logger.info('Begin Training')
         eval_per_epoch = self.args['train'].get('eval_per_epoch', 1)
         epoch = self.args['train'].get('epoch')
+        patience = self.args['train'].get('patience', -1)
+        ckpt_interval = self.args['train'].get('ckpt_interval', epoch)
         eval_idx = [len(train_dataloader) // eval_per_epoch * i for i in range(1, eval_per_epoch)]
-        patience = self.args.get('patience', -1)
         
         early_stop = False
-        for i in range(epoch):
-            self.logger.info(f'Epoch {i+1}/{epoch}')
-            for step in self.train(train_dataloader, i):
+        for epoch_idx in range(epoch):
+            self.logger.info(f'Epoch {epoch_idx + 1}/{epoch}')
+            for step in self.train(train_dataloader, epoch_idx):
                 if step in eval_idx or step == -1:
-                    self.validate(val_dataloader, i)
+                    self.validate(val_dataloader, epoch_idx)
 
-                    if self.tracker.is_metric_better(i + 1):
-                        self.save_checkpoint(i + 1, 'best')
+                    if self.tracker.is_metric_better(epoch_idx + 1):
+                        self.save_checkpoint(epoch_idx + 1, 'best')
                     else:
-                        if self.args['train']['patience'] > 0 and i + 1 - self.tracker.best_epoch > self.args['train']['patience']:
+                        if patience > 0 and epoch_idx + 1 - self.tracker.best_epoch > patience:
                             early_stop = True
                             break
 
-            if (i + 1) % self.args['train']['ckpt_interval'] == 0 or i == self.args['train']['epoch'] - 1:
-                self.save_checkpoint(i + 1)
+            if (epoch_idx + 1) % ckpt_interval == 0 or epoch_idx == epoch - 1:
+                self.save_checkpoint(epoch_idx + 1)
 
             self.logger.info(f'Epoch complete\n')
 
             if early_stop:
-                self.logger.info(f'Early stopping. No improvement in validation metric for the last {self.args["train"]["patience"]} epochs.')
+                self.logger.info(f'Early stopping. No improvement in validation metric for the last {patience} epochs.')
                 break
 
         self.logger.info(f'Best result was seen in epoch {self.tracker.best_epoch} with metric value {self.tracker.best_metric:.4f}')
