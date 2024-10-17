@@ -65,7 +65,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Stable Diffusion for Cross-Domain Translation', add_help=False)
     parser.add_argument('--uid', type=str, help='unique id for the run', default=None)
     parser.add_argument('--port', type=int, help='DDP port', default=None)
-    parser.add_argument('--config', type=str, help='path to json config', default='config/base.yaml')
+    parser.add_argument('--config', type=str, help='path to json config', default='config/example_config.yaml')
     parser.add_argument('--model-path', type=str, help='ckpt path to continue', default=None)
     parser.add_argument('--patience', type=int, help='patience for early stopping', default=-1)
     return parser.parse_args()
