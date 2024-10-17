@@ -29,7 +29,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
 
     logger.info('Instantiating model and trainer agent')
     model = ExampleModel(**train_args['model'])
-    trainer = ExampleTrainer(model, rank, train_args)
+    trainer = ExampleTrainer(model, rank, train_args, log_enabled=not train_args['train']['no_save'])
 
     logger.info('Preparing dataset')
     train_dataset = ExampleData(**train_args['data'], validation=False)
@@ -60,7 +60,9 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     )
 
     trainer.do_training(train_dataloader, val_dataloader)
-    destroy_process_group()
+
+    if not train_args['train']['no_ddp']:
+        destroy_process_group()
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Stable Diffusion for Cross-Domain Translation', add_help=False)
@@ -70,6 +72,7 @@ def get_args_parser():
     parser.add_argument('--model-path', type=str, help='ckpt path to continue', default=None)
     parser.add_argument('--patience', type=int, help='patience for early stopping', default=-1)
     parser.add_argument('--no-ddp', action='store_true', help='disable DDP')
+    parser.add_argument('--no-save', action='store_true', help='disable logging and checkpoint saving (for debugging)')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -83,6 +86,7 @@ if __name__ == '__main__':
     if args.patience != -1:
         train_args['train']['patience'] = args.patience 
     train_args['train']['no_ddp'] = args.no_ddp
+    train_args['train']['no_save'] = args.no_save
 
     if not train_args['train']['no_ddp']:
         world_size = T.cuda.device_count()

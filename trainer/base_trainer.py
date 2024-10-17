@@ -120,7 +120,7 @@ class BaseTrainer(ABC):
         self.logger.info(f'Training config saved to {config_path}')
 
     def save_checkpoint(self, epoch: int, name: str = '', only_model: bool = True):
-        if not self.is_main_process:
+        if not self.can_log:
             return
         
         if self.args['train']['no_ddp']:
