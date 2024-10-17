@@ -1,0 +1,21 @@
+model:
+  n_neurons: 10
+
+train:
+  uid: ~
+  lr: !!float 1e-2
+  cycle_period: 5000
+  cycle_mult: !!float 1.5
+  min_lr: !!float 1e-8
+  lr_decay: !!float 0.8
+  log_dir: logs
+  eval_per_epoch: 1
+  patience: 5
+  epoch: 30
+  batch_size: 32
+  n_workers: 4
+  ckpt_interval: 20
+
+data:
+  n_samples: 5000
+  val_ratio: !!float 0.2
