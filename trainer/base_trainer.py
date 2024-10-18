@@ -39,6 +39,18 @@ class Tracker:
             self.best_epoch = epoch
             return True
         return False
+    
+    def to_dict(self):
+        return {
+            'last_loss': self.last_loss,
+            'last_metric': self.last_metric,
+            'epoch': self.epoch,
+            'step_counter': self.step_counter,
+            'val_step_counter': self.val_step_counter,
+            'best_epoch': self.best_epoch,
+            'best_metric': self.best_metric,
+            'direction': self.direction
+        }
 
 class BaseTrainer(ABC):
     def __init__(self, model: T.nn.Module, gpu_id: int, args: Dict, log_enabled: bool = True, is_eval: bool = False):
@@ -50,6 +62,7 @@ class BaseTrainer(ABC):
         self.is_eval = is_eval
 
         self.uid = args['train']['uid'] if args['train']['uid'] is not None else int(time.time())
+        args['train']['uid'] = self.uid
         self.loss_fn = self._get_loss_fn()
 
         if not is_eval:
@@ -220,8 +233,8 @@ class BaseTrainer(ABC):
                 
                 pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
 
-            self.tracker.last_loss = avg_losses
-            self.tracker.last_metric = avg_losses
+            self.tracker.last_loss = avg_losses.item()
+            self.tracker.last_metric = avg_losses.item()
             self.write_summary(f'Validation/Loss', avg_losses, epoch)
    
     def do_training(self, train_dataloader: DataLoader, val_dataloader: DataLoader):
@@ -257,3 +270,9 @@ class BaseTrainer(ABC):
                 break
 
         self.logger.info(f'Best result was seen in epoch {self.tracker.best_epoch} with metric value {self.tracker.best_metric:.4f}')
+        
+        if self.can_log:
+            with open(os.path.join(self.log_dir, 'result.yaml'), 'w') as f:
+                yaml.dump(self.tracker.to_dict(), f)
+            self.logger.info(f'Result saved to {self.log_dir}/result.yaml')
+            
