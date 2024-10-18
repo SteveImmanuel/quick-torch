@@ -3,6 +3,7 @@ import argparse
 import yaml
 import random
 import torch as T
+import numpy as np
 import torch.multiprocessing as mp
 from typing import Dict
 from utils.logger import *
@@ -22,6 +23,7 @@ def ddp_setup(rank: int, world_size: int, port):
 
 def main(rank: int, world_size: int, train_args: Dict, port: int):
     setup_logging()
+    seed_everything(train_args['train']['seed'])
     if not train_args['train']['no_ddp']:
         ddp_setup(rank, world_size, port)
     
@@ -38,7 +40,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     logger.info(f'Val dataset size: {len(val_dataset)}')
 
     logger.info(f'Using {world_size} GPU(s), actual batch size: {train_args["train"]["batch_size"] * world_size}')
-    if train_args.get('model_path') is not None:
+    if train_args['train'].get('model_path') is not None:
         trainer.load_checkpoint(train_args['model_path'])
 
     logger.info('Instantiating dataloader')
@@ -64,12 +66,21 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     if not train_args['train']['no_ddp']:
         destroy_process_group()
 
+def seed_everything(seed: int):    
+    random.seed(seed)
+    np.random.seed(seed)
+    T.manual_seed(seed)
+    T.cuda.manual_seed(seed)
+    T.backends.cudnn.deterministic = True
+    T.backends.cudnn.benchmark = True
+
 def get_args_parser():
-    parser = argparse.ArgumentParser('Stable Diffusion for Cross-Domain Translation', add_help=False)
+    parser = argparse.ArgumentParser('QuickTorch Train', add_help=False)
     parser.add_argument('--uid', type=str, help='unique id for the run', default=None)
     parser.add_argument('--config', type=str, help='path to json config', default='config/example_config.yaml')
     parser.add_argument('--model-path', type=str, help='ckpt path to continue', default=None)
     parser.add_argument('--patience', type=int, help='patience for early stopping', default=-1)
+    parser.add_argument('--seed', type=int, help='random seed', default=None)
     parser.add_argument('--port', type=int, help='DDP port', default=None)
     parser.add_argument('--no-ddp', action='store_true', help='disable DDP')
     parser.add_argument('--no-save', action='store_true', help='disable logging and checkpoint saving (for debugging)')
@@ -79,6 +90,8 @@ if __name__ == '__main__':
     args = get_args_parser()
     train_args = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
 
+    if args.seed is None and train_args['train'].get('seed', None) is None:
+        train_args['train']['seed'] = random.randint(0, 1000000)
     if args.uid is not None:
         train_args['train']['uid'] = args.uid
     if args.model_path is not None:

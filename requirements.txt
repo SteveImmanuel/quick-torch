@@ -3,3 +3,5 @@ torch-cosine-annealing
 tqdm
 pyyaml
 tensorboard
+optuna
+numpy
