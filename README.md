@@ -8,6 +8,8 @@ Main features:
 - Support distributed training
 - Support logging, checkpointing
 - Multiple validation phases in a single epoch
+- Deterministic training
+- Automatic hyperparameter search
 
 ## Installation
 Install all dependencies by running:
@@ -69,6 +71,24 @@ By default, the training script will utilize all available GPUs. If you want to 
 On the other hand, if you want to only run in a single GPU, add a `--no-ddp` flag. This will disable the distributed training and make the training faster (if dataloading is the bottleneck) because it does not need to configure communications, sampling, and synching between GPUs.
 
 To disable logging and checkpoint to the log directory, add a `--no-save` flag. This is useful for debugging so that you don't create multiple log files.
+
+## Hyperparameter Search
+You need to configure which hyperparameters to search and all the candidate values in the script. The script can be run by:
+```bash
+python hyptune.py --config <path to yaml config file> --study-name <name of the study>
+```
+
+See [hyptune.py](hyptune.py) for an example.
+
+To see the results of the hyperparameter search, run:
+```bash
+optuna-dashboard sqlite:///<name of the study>.db --host 0.0.0.0
+```
+## Logging
+Tensorboard is utilized for logging. To see the logs, run:
+```bash
+tensorboard --logdir <path to log directory>
+```
 
 ## References
 - [PyTorch DDP tutorials](https://www.youtube.com/playlist?list=PL_lsbAsL_o2CSuhUhJIiW0IkdT5C2wGWj)

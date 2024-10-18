@@ -5,3 +5,4 @@ pyyaml
 tensorboard
 optuna
 numpy
+optuna-dashboard
