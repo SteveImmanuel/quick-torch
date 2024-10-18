@@ -42,6 +42,6 @@ class ExampleTrainer(BaseTrainer):
 
         with T.cuda.amp.autocast():
             y_pred = self.model(x)
+            loss = self.loss_fn(y_pred, y)
 
-        loss = self.loss_fn(y_pred, y)
         return loss
