@@ -207,7 +207,8 @@ class BaseTrainer(ABC):
 
         self.write_summary(f'Train/Loss', avg_losses, epoch)
         yield -1
-
+    
+    @T.no_grad()
     def validate(self, dl: DataLoader, epoch: int):
         """Handles the validation loop for a single epoch."""
         self.logger.info('Validation Phase')
@@ -216,26 +217,25 @@ class BaseTrainer(ABC):
         batch_losses = T.zeros(2, device=self.gpu_id)
         pbar = tqdm(dl, disable=not self.is_main_process)
 
-        with T.no_grad():
-            for batch_data in pbar:
-                b_loss = self.step(*batch_data)
-                self.tracker.inc_val_step_counter()
-                
-                if not self.is_main_process:  # reset for gpu rank > 0
-                    batch_losses = T.zeros(2, device=self.gpu_id)
+        for batch_data in pbar:
+            b_loss = self.step(*batch_data)
+            self.tracker.inc_val_step_counter()
+            
+            if not self.is_main_process:  # reset for gpu rank > 0
+                batch_losses = T.zeros(2, device=self.gpu_id)
 
-                batch_losses[0] += b_loss
-                batch_losses[1] += 1
+            batch_losses[0] += b_loss
+            batch_losses[1] += 1
 
-                if not self.args['train']['no_ddp']:
-                    T.distributed.reduce(batch_losses, dst=0)
-                avg_losses = batch_losses[0] / batch_losses[1]
-                
-                pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
+            if not self.args['train']['no_ddp']:
+                T.distributed.reduce(batch_losses, dst=0)
+            avg_losses = batch_losses[0] / batch_losses[1]
+            
+            pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
 
-            self.tracker.last_loss = avg_losses.item()
-            self.tracker.last_metric = avg_losses.item()
-            self.write_summary(f'Validation/Loss', avg_losses, epoch)
+        self.tracker.last_loss = avg_losses.item()
+        self.tracker.last_metric = avg_losses.item()
+        self.write_summary(f'Validation/Loss', avg_losses, epoch)
    
     def do_training(self, train_dataloader: DataLoader, val_dataloader: DataLoader):
         """Handles full training process for all epochs. Each epoch consists of training and validation phase."""
