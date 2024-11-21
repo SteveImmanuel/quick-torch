@@ -175,6 +175,9 @@ class BaseTrainer(ABC):
         self.logger.info('Training Phase')
         self.model.train()
 
+        if not self.args['train']['no_ddp']:
+            dl.sampler.set_epoch(epoch)
+
         batch_losses = T.zeros(2, device=self.gpu_id)
         pbar = tqdm(dl, disable=not self.is_main_process)
 
@@ -213,6 +216,9 @@ class BaseTrainer(ABC):
         """Handles the validation loop for a single epoch."""
         self.logger.info('Validation Phase')
         self.model.eval()
+
+        if not self.args['train']['no_ddp']:
+            dl.sampler.set_epoch(epoch)
 
         batch_losses = T.zeros(2, device=self.gpu_id)
         pbar = tqdm(dl, disable=not self.is_main_process)
