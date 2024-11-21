@@ -239,6 +239,9 @@ class BaseTrainer(ABC):
             
             pbar.set_postfix({'Loss': f'{avg_losses:.4f}'})
 
+        if not self.args['train']['no_ddp']:
+            T.distributed.broadcast(avg_losses, src=0)
+
         self.tracker.last_loss = avg_losses.item()
         self.tracker.last_metric = avg_losses.item()
         self.write_summary(f'Validation/Loss', avg_losses, epoch)
@@ -259,15 +262,13 @@ class BaseTrainer(ABC):
                 if step in eval_idx or step == -1:
                     self.validate(val_dataloader, epoch_idx)
 
+                    self.save_checkpoint(epoch_idx + 1, 'last')
                     if self.tracker.is_metric_better(epoch_idx + 1):
                         self.save_checkpoint(epoch_idx + 1, 'best')
                     else:
                         if patience > 0 and epoch_idx + 1 - self.tracker.best_epoch > patience:
                             early_stop = True
                             break
-
-            if (epoch_idx + 1) % ckpt_interval == 0 or epoch_idx == epoch - 1:
-                self.save_checkpoint(epoch_idx + 1)
 
             self.logger.info(f'Epoch complete\n')
 
