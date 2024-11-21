@@ -67,7 +67,7 @@ class BaseTrainer(ABC):
 
         if not is_eval:
             self.optim = self._get_optimizer()
-            self.scaler = T.cuda.amp.GradScaler()
+            self.scaler = T.GradScaler('cuda')
             self.scheduler = self._get_scheduler()
 
         if self.can_log:

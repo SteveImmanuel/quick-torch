@@ -40,7 +40,7 @@ class ExampleTrainer(BaseTrainer):
 
         x, y = batch_data
 
-        with T.cuda.amp.autocast():
+        with T.autocast('cuda'):
             y_pred = self.model(x)
             loss = self.loss_fn(y_pred, y)
 
