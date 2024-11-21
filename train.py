@@ -51,6 +51,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
         sampler=None if train_args['train']['no_ddp'] else DistributedSampler(train_dataset),
+        persistent_workers=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -59,6 +60,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
         sampler=None if train_args['train']['no_ddp'] else DistributedSampler(val_dataset),
+        persistent_workers=True,
     )
 
     trainer.do_training(train_dataloader, val_dataloader)
