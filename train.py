@@ -94,8 +94,10 @@ def get_args_parser():
 if __name__ == '__main__':
     args = get_args_parser()
     train_args = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
-
-    if args.seed is None and train_args['train'].get('seed', None) is None:
+    
+    if args.seed is not None:
+        train_args['train']['seed'] = args.seed
+    elif train_args['train'].get('seed', None) is None:
         train_args['train']['seed'] = random.randint(0, 1000000)
     if args.uid is not None:
         train_args['train']['uid'] = args.uid
