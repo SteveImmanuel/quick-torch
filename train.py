@@ -39,14 +39,17 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     logger.info(f'Train dataset size: {len(train_dataset)}')
     logger.info(f'Val dataset size: {len(val_dataset)}')
 
-    logger.info(f'Using {world_size} GPU(s), actual batch size: {train_args["train"]["batch_size"] * world_size}')
+    logger.info(f'Using {world_size} GPU(s)')
     if train_args['train'].get('model_path') is not None:
         trainer.load_checkpoint(train_args['model_path'])
+
+    if not train_args['train']['batch_size'] % world_size == 0:
+        logger.error(f'Batch size {train_args['train']['batch_size']} must be divisible by the number of GPUs {world_size}')
 
     logger.info('Instantiating dataloader')
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=train_args['train']['batch_size'],
+        batch_size=train_args['train']['batch_size'] // world_size,
         shuffle=True if train_args['train']['no_ddp'] else False,
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
@@ -55,7 +58,7 @@ def main(rank: int, world_size: int, train_args: Dict, port: int):
     )
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=train_args['train']['batch_size'],
+        batch_size=train_args['train']['batch_size'] // world_size,
         shuffle=False,
         num_workers=train_args['train']['n_workers'],
         pin_memory=True,
